@@ -1,5 +1,6 @@
 ﻿using System.IO.Compression;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -68,7 +69,9 @@ namespace LibraServer
                          
                             if (blockstarsCache.HasItemWithName(profileId))
                             {
-                                string respons = JsonConvert.SerializeObject(blockstarsCache.GetItem(profileId));
+                                var item = blockstarsCache.GetItems(profileId);
+                           
+                                string respons = JsonConvert.SerializeObject(item);
                                 byte[] bajty = Encoding.UTF8.GetBytes(respons);
                                 CompressIfNeeded(ref response, ref bajty);
                                 response.StatusCode = (int)HttpStatusCode.OK;

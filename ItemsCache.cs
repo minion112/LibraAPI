@@ -1,11 +1,15 @@
 ﻿using System.Timers;
+using Newtonsoft.Json;
 
 namespace LibraServer
 {
     public struct CacheItem<T> where T : struct
     {
+        [JsonIgnore]
         public DateTime CreationTime { get; set; }
+        [JsonIgnore]
         public string Name { get; set; }
+     
         public T Value { get; set; }
     }
     internal class ItemsCache<T>: IDisposable where T : struct
@@ -42,11 +46,25 @@ namespace LibraServer
                
             }
         }
-        public CacheItem<T> GetItem(string name)
+        public T GetItem(string name)
         {
             lock (blockstarsCache)
             {
-                return blockstarsCache.Where(x => x.Name == name).First();
+
+                return blockstarsCache.Where(x => x.Name == name).First().Value;
+            }
+        }
+        public T[] GetItems(string name)
+        {
+            lock (blockstarsCache)
+            {
+                var loc = blockstarsCache.Where(x => x.Name == name).ToArray();
+                T[] loc2 = new T[loc.Count()];
+                for (int i = 0; i < loc.Count(); i++)
+                {
+                    loc2[i] = loc[i].Value;
+                }
+                return loc2;
             }
         }
         private void OnTimerTick(object sender, ElapsedEventArgs e)
