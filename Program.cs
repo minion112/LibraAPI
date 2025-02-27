@@ -12,14 +12,15 @@ namespace LibraServer
         public string Name { get; set; }
         public int Id { get; set; }
     }
-
+    
     internal class Program
     {
         static readonly HttpListener listener = new HttpListener();
 
         public static string Server = "PL";
         static NebulaUtils.LoginResult result;
-        static readonly ItemsCache<Entry> blockstarsCache = new ItemsCache<Entry>(); 
+        static readonly ItemsCache<Entry> blockstarsCache = new ItemsCache<Entry>();
+        static readonly List<NebulaUtils.LoginResult> botsList = new List<NebulaUtils.LoginResult>();
         static void Main()
         {
         
@@ -109,6 +110,45 @@ namespace LibraServer
 
                 }
 
+            }
+            else if (request.Url.AbsolutePath == "/WebService/GetBotsCount")
+            {
+               
+                    response.StatusCode = (int)HttpStatusCode.OK;
+                    response.ContentType = "application/json";
+                    byte[] bajty = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new
+                    {
+                        botsList.Count
+                    }));
+                    response.ContentLength64 = bajty.Length;
+                    response.OutputStream.Write(bajty);
+                
+            }
+            else if(request.Url.AbsolutePath == "/WebService/AddNewBotToPool")
+            {
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    request.InputStream.CopyTo(ms);
+                    ms.Position = 0;
+                    using (var reader = new StreamReader(ms, Encoding.UTF8))
+                    {
+                        string json = reader.ReadToEnd();
+                        try
+                        {
+                            NebulaUtils.LoginResult result = JsonConvert.DeserializeObject<NebulaUtils.LoginResult>(json);
+                            lock (botsList)
+                            {
+                                botsList.Add(result);
+                            }
+                            response.StatusCode = (int)HttpStatusCode.OK;
+                        }
+                        catch (Exception)
+                        {
+                            response.StatusCode = (int)HttpStatusCode.NotAcceptable;
+                        }
+                    }
+
+                }
             }
             else
                if (request.Url?.AbsolutePath == "/")

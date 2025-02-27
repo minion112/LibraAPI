@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using System.Text;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace LibraServer
@@ -8,6 +9,7 @@ namespace LibraServer
     {
         internal struct LoginResult
         {
+            [JsonIgnore]
             public bool Success { get; set; }
             public string AccessToken { get; set; }
 
