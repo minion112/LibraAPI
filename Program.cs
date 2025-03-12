@@ -8,6 +8,7 @@ using System.IO.Compression;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
+using ComponentAce.Compression.Libs.zlib;
 
 namespace LibraServer
 {
@@ -47,88 +48,87 @@ namespace LibraServer
 
         static void HandleClient(TcpClient tcpClient)
         {
-            var stream = tcpClient.GetStream();
-            var reader = new StreamReader(stream, Encoding.UTF8);
-            while (true)
-            {
-
-                if (!stream.Socket.Connected) break;
-                    string request = reader.ReadLine();
-                if (string.IsNullOrEmpty(request)) continue;
-                    Console.WriteLine($"Request: {request}");
-                    Dictionary<string, string> headers = new Dictionary<string, string>();
-                    string line;
-                    string body = "";
-                    while (!string.IsNullOrEmpty(line = reader.ReadLine()))
+            using (var stream = tcpClient.GetStream())
+            using (var reader = new StreamReader(stream, Encoding.UTF8))
+                while (stream.Socket.Connected)
+                {
+                    try
                     {
-                        Console.WriteLine(line);
-                        string[] split = line.Split(':');
-                        if (split.Length > 1)
-                            headers[split[0]] = split[1].TrimStart();
-
-                    }
-                    if (headers.ContainsKey("Content-Length"))
-                    {
-                        byte[] ar = new byte[Convert.ToInt32(headers["Content-Length"])];
-                        for (int i = 0; i < ar.Length; i++)
+                        string request = reader.ReadLine();
+                        if (string.IsNullOrEmpty(request)) continue;
+                        Console.WriteLine($"Request: {request}");
+                        Dictionary<string, string> headers = new Dictionary<string, string>();
+                        string line;
+                        string body = "";
+                        while (!string.IsNullOrEmpty(line = reader.ReadLine()))
                         {
-                            ar[i] = (byte)reader.Read();
+                            Console.WriteLine(line);
+                            string[] split = line.Split(':');
+                            if (split.Length > 1)
+                                headers[split[0]] = split[1].TrimStart();
+
                         }
-                        body = Encoding.UTF8.GetString(ar);
-                    }
-
-
-                    string[] requestParts = request.Split(' ');
-                    if (requestParts.Length < 3)
-                    {
-                        stream.Write(Encoding.UTF8.GetBytes("HTTP/1.1 400 Bad Request\r\nConnection: keep-alive\r\n\r\n"));
-                    break ;
-                    }
-
-                    string method = requestParts[0]; // GET, POST, etc.
-                    string url = requestParts[1]; // The URL requested
-                    string version = requestParts[2]; // HTTP version (e.g., HTTP/1.1)
-
-                    // Process the request based on URL and method
-                    if (url == "/WebService/GetBlockStars")
-                    {
-                        HandleGetBlockStars(stream, body);
-                    }
-                    else if (url == "/WebService/GetBotsCount")
-                    {
-                        HandleGetBotsCount(stream);
-                    }
-                    else if (url == "/WebService/AddNewBotToPool")
-                    {
-                        HandleUpdateBotToPool(stream, body);
-                    }
-                    else if (url == "/")
-                    {
-                        HandleRootPage(stream);
-                    }
-                    else
-                    {
-                        string filePath = Directory.GetCurrentDirectory() + url;
-                        if (File.Exists(filePath))
+                        if (headers.ContainsKey("Content-Length"))
                         {
-                            byte[] bytes = File.ReadAllBytes(filePath);
-                            bool isCompressed = CompressIfNeeded(ref bytes);
-                            stream.Write(Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: {GetMimeType(filePath)}\r\n{(isCompressed ? "Content-Encoding: deflate\r\n" : "")}Content-Length: {bytes.Length}\r\nConnection: keep-alive\r\n\r\n"));
-                            stream.Write(bytes);
+                            byte[] ar = new byte[Convert.ToInt32(headers["Content-Length"])];
+                            stream.ReadExactly(ar);
+                            body = Encoding.UTF8.GetString(ar);
+                        }
+
+
+                        string[] requestParts = request.Split(' ');
+                        if (requestParts.Length < 3)
+                        {
+                            stream.Write(Encoding.UTF8.GetBytes("HTTP/1.1 400 Bad Request\r\nConnection: keep-alive\r\n\r\n"));
+                            break;
+                        }
+
+                        string method = requestParts[0];
+                        string url = requestParts[1]; 
+
+                        if (url == "/WebService/GetBlockStars" && method=="POST")
+                        {
+                            HandleGetBlockStars(stream, body);
+                        }
+                        else if (url == "/WebService/GetBotsCount" && method=="GET")
+                        {
+                            HandleGetBotsCount(stream);
+                        }
+                        else if (url == "/WebService/AddNewBotToPool" && method == "POST")
+                        {
+                            HandleUpdateBotToPool(stream, body);
+                        }
+                        else if (url == "/" && method == "GET")
+                        {
+                            HandleRootPage(stream);
                         }
                         else
                         {
-                            stream.Write(Encoding.UTF8.GetBytes("HTTP/1.1 404 Not Found\r\nConnection: keep-alive\r\n\r\n"));
-                        break;
+                            string filePath = url.Remove(0,1);
+                            if (File.Exists(filePath))
+                            {
+                                byte[] bytes = File.ReadAllBytes(filePath);
+                                bool isCompressed = CompressIfNeeded(ref bytes);
+                                stream.Write(Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: {GetMimeType(filePath)}\r\n{(isCompressed ? "Content-Encoding: deflate\r\n" : "")}Content-Length: {bytes.Length}\r\nConnection: keep-alive\r\n\r\n"));
+                                stream.Write(bytes);
+                            }
+                            else
+                            {
+                                stream.Write(Encoding.UTF8.GetBytes("HTTP/1.1 404 Not Found\r\nConnection: keep-alive\r\n\r\n"));
+                                break;
+                            }
+
+
                         }
-
-
+                        stream.Flush();
                     }
-                    stream.Flush();
+                    catch (Exception)
+                    {
+                        break;
+                    }
 
 
-                
-            }
+                }
         }
         static string GetMimeType(string filePath)
         {
@@ -148,8 +148,6 @@ namespace LibraServer
         }
         static void HandleGetBlockStars( NetworkStream writer,string body)
         {
-            // For simplicity, we assume blockstarsCache is populated
-
             var response = JObject.Parse(body);
             string profileid = response["profileid"].ToString();
             using(FoxClient fx = new FoxClient(botsList[0]))
@@ -174,8 +172,6 @@ namespace LibraServer
         static void HandleUpdateBotToPool(NetworkStream writer, string body)
         {
           
-            try
-            {
                 var result = JsonConvert.DeserializeObject<NebulaUtils.LoginResult>(body);
                 lock (botsList)
                 {
@@ -195,11 +191,7 @@ namespace LibraServer
 
                 writer.Write(Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: keep-alive\r\nContent-Length: 0\r\n\r\n"));
      
-            }
-            catch (Exception)
-            {
-                writer.Write(Encoding.UTF8.GetBytes("HTTP/1.1 400 Bad Request\r\nConnection: keep-alive\r\n\r\n"));
-            }
+           
         }
 
         static void HandleRootPage(NetworkStream writer)
@@ -223,12 +215,9 @@ namespace LibraServer
 
         static void InitTCP()
         {
-            // Create a TCP listener
             TcpListener tcpListener = new TcpListener(IPAddress.Any, 20148);
             tcpListener.Start();
             Console.WriteLine("Server started!");
-
-            // Handle incoming connections
             while (true)
             {
                 TcpClient tcpClient = tcpListener.AcceptTcpClient();
