@@ -1,224 +1,135 @@
-﻿using System.IO.Compression;
+﻿using System;
+using System.IO;
 using System.Net;
-using System.Runtime.InteropServices;
+using System.Net.Sockets;
 using System.Text;
+using System.Threading;
+using System.IO.Compression;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using System.Collections.Generic;
 
 namespace LibraServer
 {
-    public struct Entry  
+    public struct Entry
     {
         public string Name { get; set; }
         public int Id { get; set; }
     }
-    
+
     internal class Program
     {
-        static readonly HttpListener listener = new HttpListener();
 
-        public static string Server = "PL";
-        static NebulaUtils.LoginResult result;
-        static readonly ItemsCache<Entry> blockstarsCache = new ItemsCache<Entry>();
         static readonly List<NebulaUtils.LoginResult> botsList = new List<NebulaUtils.LoginResult>();
+        public static string Server="PL";
         static void Main()
         {
-        
-            var lr = NebulaUtils.Login("PL|ZolwikPoranek10", "bsp321", useProxy: false);
-            if (lr.Success)
-            {
-                result = lr;
-                InitHTTP();
-             
-
-            }
-               
+            InitTCP();
             Console.ReadLine();
         }
 
-        static void CompressIfNeeded(ref HttpListenerResponse response,ref byte[] bytes)
+        static bool CompressIfNeeded(ref byte[] bytes)
         {
-            if (bytes.Length > Constants.MIN_BEFORE_COMPRESS)
+            if (bytes.Length > Constants.MIN_BEFORE_COMPRESS) // Define your threshold for compression
             {
-                response.AddHeader("Content-Encoding", "deflate");
                 using (MemoryStream ms = new MemoryStream())
                 {
                     using (DeflateStream deflate = new DeflateStream(ms, CompressionMode.Compress))
                     {
-                         deflate.Write(bytes, 0, bytes.Length);
+                        deflate.Write(bytes, 0, bytes.Length);
                     }
                     bytes = ms.ToArray();
                 }
+                return true;
             }
+            return false;
         }
-        static async Task HandleClient(HttpListenerContext context)
+
+        static void HandleClient(TcpClient tcpClient)
         {
-            HttpListenerRequest request = context.Request;
-            HttpListenerResponse response = context.Response;
-            if (request.Url?.AbsolutePath == "/WebService/GetBlockStars")
-            {
-                using (MemoryStream ms = new MemoryStream())
-                {
-                    request.InputStream.CopyTo(ms);
-                    ms.Position = 0;
-                    using (var reader = new StreamReader(ms, Encoding.UTF8))
-                    {
-                        string json = reader.ReadToEnd();
-                        try
-                        {
-                            string profileId = JObject.Parse(json).GetValue("profileid").ToString();
-                         
-                            if (blockstarsCache.HasItemWithName(profileId))
-                            {
-                                var item = blockstarsCache.GetItems(profileId);
-                           
-                                string respons = JsonConvert.SerializeObject(item);
-                                byte[] bajty = Encoding.UTF8.GetBytes(respons);
-                                CompressIfNeeded(ref response, ref bajty);
-                                response.StatusCode = (int)HttpStatusCode.OK;
-                                response.ContentType = "application/json";
-                                response.ContentLength64 = bajty.Length;
-                                response.OutputStream.Write(bajty);
-                            }
-                            else
-                            {
-                                using (var primaryBot = new FoxClient(result))
-                                {
-                                    int actorid = primaryBot.GetActorIdByProfileId(profileId);
-                                    var blockstars = primaryBot.GetAllBlockStars(actorid);
-                                    blockstarsCache.AddItems(profileId, blockstars);
-                                    string respons = JsonConvert.SerializeObject(blockstars);
-                                    byte[] bajty = Encoding.UTF8.GetBytes(respons);
-                                    CompressIfNeeded(ref response, ref bajty);
-                                    response.StatusCode = (int)HttpStatusCode.OK;
-                                    response.ContentType = "application/json";
-                                    response.ContentLength64 = bajty.Length;
-                                    response.OutputStream.Write(bajty);
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                            response.OutputStream.Write(Encoding.UTF8.GetBytes(ex.Message));
-                        }
-                                
-                           
-                        
-                        
-                    }
-
-                }
-
-            }
-            else if (request.Url.AbsolutePath == "/WebService/GetBotsCount")
-            {
-               
-                    response.StatusCode = (int)HttpStatusCode.OK;
-                    response.ContentType = "application/json";
-                    byte[] bajty = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new
-                    {
-                        botsList.Count
-                    }));
-                    response.ContentLength64 = bajty.Length;
-                    response.OutputStream.Write(bajty);
-                
-            }
-            else if(request.Url.AbsolutePath == "/WebService/AddNewBotToPool")
-            {
-                using (MemoryStream ms = new MemoryStream())
-                {
-                    request.InputStream.CopyTo(ms);
-                    ms.Position = 0;
-                    using (var reader = new StreamReader(ms, Encoding.UTF8))
-                    {
-                        string json = reader.ReadToEnd();
-                        try
-                        {
-                            NebulaUtils.LoginResult result = JsonConvert.DeserializeObject<NebulaUtils.LoginResult>(json);
-                            lock (botsList)
-                            {
-                                botsList.Add(result);
-                            }
-                            response.StatusCode = (int)HttpStatusCode.OK;
-                        }
-                        catch (Exception)
-                        {
-                            response.StatusCode = (int)HttpStatusCode.NotAcceptable;
-                        }
-                    }
-
-                }
-            }
-            else
-               if (request.Url?.AbsolutePath == "/")
-            {
-                response.ContentType = "text/html";
-                response.StatusCode = (int)HttpStatusCode.OK;
-                byte[] bytes = File.ReadAllBytes("index.html");
-
-                CompressIfNeeded(ref response, ref bytes);
-
-                response.ContentLength64 = bytes.Length;
-                response.OutputStream.Write(bytes, 0, bytes.Length);
-            }
-            else
-            {
-                string filePath = Directory.GetCurrentDirectory() + request.Url.AbsolutePath;
-                if (File.Exists(filePath))
-                {
-                    byte[] bytes = File.ReadAllBytes(filePath);
-                    response.ContentType = GetMimeType(filePath);
-
-                    CompressIfNeeded(ref response, ref bytes);
-                    response.ContentLength64 = bytes.Length;
-                    response.StatusCode = (int)HttpStatusCode.OK;
-                   response.OutputStream.Write(bytes, 0, bytes.Length);
-                }
-                else
-                {
-                    response.StatusCode = (int)HttpStatusCode.NotFound;
-                }
-            }
-
-            response.OutputStream.Flush();
-            response.Close();
-        }
-        static async void InitHTTP()
-        {
-          
-            listener.Prefixes.Add("http://192.168.0.141:80/");
-            listener.Start();
-            Console.WriteLine("Server started at http://192.168.0.141:80/");
-
+            var stream = tcpClient.GetStream();
+            var reader = new StreamReader(stream, Encoding.UTF8);
             while (true)
             {
-                HttpListenerContext context = await listener.GetContextAsync();
-             await HandleClient(context);
 
-                //if (request.Url.AbsolutePath == "/events")
-                //{
-                //    Console.WriteLine("Client connected to SSE stream");
+                if (!stream.Socket.Connected) break;
+                    string request = reader.ReadLine();
+                if (string.IsNullOrEmpty(request)) continue;
+                    Console.WriteLine($"Request: {request}");
+                    Dictionary<string, string> headers = new Dictionary<string, string>();
+                    string line;
+                    string body = "";
+                    while (!string.IsNullOrEmpty(line = reader.ReadLine()))
+                    {
+                        Console.WriteLine(line);
+                        string[] split = line.Split(':');
+                        if (split.Length > 1)
+                            headers[split[0]] = split[1].TrimStart();
 
-                //    response.ContentType = "text/event-stream";
-                //    response.Headers.Add("Cache-Control", "no-cache");
-                //    response.Headers.Add("Connection", "keep-alive");
-                //    response.StatusCode = (int)HttpStatusCode.OK;
+                    }
+                    if (headers.ContainsKey("Content-Length"))
+                    {
+                        byte[] ar = new byte[Convert.ToInt32(headers["Content-Length"])];
+                        for (int i = 0; i < ar.Length; i++)
+                        {
+                            ar[i] = (byte)reader.Read();
+                        }
+                        body = Encoding.UTF8.GetString(ar);
+                    }
 
-                //    var output = response.OutputStream;
 
-                //    lock (eventSubscribers)
-                //    {
-                //        eventSubscribers.Add(output);
-                //    }
+                    string[] requestParts = request.Split(' ');
+                    if (requestParts.Length < 3)
+                    {
+                        stream.Write(Encoding.UTF8.GetBytes("HTTP/1.1 400 Bad Request\r\nConnection: keep-alive\r\n\r\n"));
+                    break ;
+                    }
 
-                //    // Keep connection alive (prevent response.Close() from being called)
-                //    await Task.Delay(-1);
-                //}
-               
+                    string method = requestParts[0]; // GET, POST, etc.
+                    string url = requestParts[1]; // The URL requested
+                    string version = requestParts[2]; // HTTP version (e.g., HTTP/1.1)
+
+                    // Process the request based on URL and method
+                    if (url == "/WebService/GetBlockStars")
+                    {
+                        HandleGetBlockStars(stream, body);
+                    }
+                    else if (url == "/WebService/GetBotsCount")
+                    {
+                        HandleGetBotsCount(stream);
+                    }
+                    else if (url == "/WebService/AddNewBotToPool")
+                    {
+                        HandleUpdateBotToPool(stream, body);
+                    }
+                    else if (url == "/")
+                    {
+                        HandleRootPage(stream);
+                    }
+                    else
+                    {
+                        string filePath = Directory.GetCurrentDirectory() + url;
+                        if (File.Exists(filePath))
+                        {
+                            byte[] bytes = File.ReadAllBytes(filePath);
+                            bool isCompressed = CompressIfNeeded(ref bytes);
+                            stream.Write(Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: {GetMimeType(filePath)}\r\n{(isCompressed ? "Content-Encoding: deflate\r\n" : "")}Content-Length: {bytes.Length}\r\nConnection: keep-alive\r\n\r\n"));
+                            stream.Write(bytes);
+                        }
+                        else
+                        {
+                            stream.Write(Encoding.UTF8.GetBytes("HTTP/1.1 404 Not Found\r\nConnection: keep-alive\r\n\r\n"));
+                        break;
+                        }
+
+
+                    }
+                    stream.Flush();
+
+
+                
             }
         }
-
         static string GetMimeType(string filePath)
         {
             string ext = Path.GetExtension(filePath).ToLower();
@@ -234,6 +145,95 @@ namespace LibraServer
                 ".txt" => "text/plain",
                 _ => "application/octet-stream"
             };
+        }
+        static void HandleGetBlockStars( NetworkStream writer,string body)
+        {
+            // For simplicity, we assume blockstarsCache is populated
+
+            var response = JObject.Parse(body);
+            string profileid = response["profileid"].ToString();
+            using(FoxClient fx = new FoxClient(botsList[0]))
+            {
+                fx.LoginToFox();
+                int actorid = fx.GetActorIdByProfileId(profileid);
+                string response2 = JsonConvert.SerializeObject(fx.GetAllBlockStars(actorid));
+                string toreply = $"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {response2.Length}\r\nConnection: keep-alive\r\n\r\n{response2}";
+                writer.Write(Encoding.UTF8.GetBytes(toreply));
+
+            }
+           
+        }
+
+        static void HandleGetBotsCount(NetworkStream writer)
+        {
+            var response = JsonConvert.SerializeObject(new { botsList.Count });
+
+            writer.Write(Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: keep-alive\r\nContent-Length: {response.Length}\r\n\r\n{response}"));
+        }
+
+        static void HandleUpdateBotToPool(NetworkStream writer, string body)
+        {
+          
+            try
+            {
+                var result = JsonConvert.DeserializeObject<NebulaUtils.LoginResult>(body);
+                lock (botsList)
+                {
+                    bool loc0 = false;
+                    for (int i = 0; i < botsList.Count; i++)
+                    {
+                        if (botsList[i].Username == result.Username)
+                        {
+                            loc0 = true;
+                            botsList.RemoveAt(i);
+                            botsList.Add(result);
+                            break;
+                        }
+                    }
+                    if (!loc0) botsList.Add(result);
+                }
+
+                writer.Write(Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: keep-alive\r\nContent-Length: 0\r\n\r\n"));
+     
+            }
+            catch (Exception)
+            {
+                writer.Write(Encoding.UTF8.GetBytes("HTTP/1.1 400 Bad Request\r\nConnection: keep-alive\r\n\r\n"));
+            }
+        }
+
+        static void HandleRootPage(NetworkStream writer)
+        {
+            // Serve an index.html file
+            string filePath = "index.html";
+            if (File.Exists(filePath))
+            {
+                byte[] bytes = File.ReadAllBytes(filePath);
+                bool isCompressed = CompressIfNeeded(ref bytes);
+              
+                writer.Write(Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n{(isCompressed? "Content-Encoding: deflate\r\n":"")}Content-Length: {bytes.Length}\r\nConnection: keep-alive\r\n\r\n"));
+                writer.Write(bytes);
+            }
+            else
+            {
+                writer.Write(Encoding.UTF8.GetBytes("HTTP/1.1 404 Not Found\r\nConnection: keep-alive\r\n\r\n"));
+               
+            }
+        }
+
+        static void InitTCP()
+        {
+            // Create a TCP listener
+            TcpListener tcpListener = new TcpListener(IPAddress.Any, 20148);
+            tcpListener.Start();
+            Console.WriteLine("Server started!");
+
+            // Handle incoming connections
+            while (true)
+            {
+                TcpClient tcpClient = tcpListener.AcceptTcpClient();
+                ThreadPool.QueueUserWorkItem(state => HandleClient(tcpClient));
+            }
         }
     }
 }

@@ -42,26 +42,36 @@ namespace LibraServer
         }
         public byte[] ReadRaw()
         {
-            
-            byte[] buffer = new byte[1024]; // Adjust buffer size as needed
-            using MemoryStream ms = new MemoryStream();
-
-            int bytesRead;
-            while ((bytesRead = client.GetStream().Read(buffer, 0, buffer.Length)) > 0)
+            List<byte> bytes = new List<byte>();
+            byte[] countBytes = new byte[3];
+            client.GetStream().ReadExactly(countBytes);
+            ushort len = BitConverter.ToUInt16([countBytes[2], countBytes[1]]);
+            if (len > 0)
             {
-                ms.Write(buffer, 0, bytesRead);
-
-                // If no more data is available, break (basic assumption)
-                if (!client.GetStream().DataAvailable)
-                    break;
+               
+                byte[] bufor = new byte[len];
+                client.GetStream().ReadExactly(bufor);
+                bytes.AddRange(countBytes);
+                bytes.AddRange(bufor);
             }
-            return ms.ToArray();
+            //byte[] buffer = new byte[1024]; // Adjust buffer size as needed
+            //using MemoryStream ms = new MemoryStream();
+
+            //int bytesRead;
+            //while ((bytesRead = client.GetStream().Read(buffer, 0, buffer.Length)) > 0)
+            //{
+            //    ms.Write(buffer, 0, bytesRead);
+
+            //    // If no more data is available, break (basic assumption)
+            //    if (!client.GetStream().DataAvailable)
+            //        break;
+            //}
+            return bytes.ToArray();
         }
         public ISFSObject HandleExtResponse()
         {
             var raw = ReadRaw();
             PacketHeader packetHeader = PacketHeader.FromBinary(raw[0]);
-       
                 byte[] newByteArray = new byte[raw.Length - 1 - (packetHeader.BigSized ? 4 : 2)];
                 Buffer.BlockCopy(raw, (packetHeader.BigSized ? 4 : 2) + 1, newByteArray, 0,newByteArray.Length);
             

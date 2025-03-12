@@ -9,7 +9,6 @@ namespace LibraServer
         {
          //   SendPacket(new HandshakeRequest("1.7.15", null, "windows-desktop:7.10.12"));
          //   ReadRaw();
-            LoginToFox();
         }
         public int GetActorIdByProfileId(string profileId)
         {
