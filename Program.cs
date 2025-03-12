@@ -70,9 +70,10 @@ namespace LibraServer
                         }
                         if (headers.ContainsKey("Content-Length"))
                         {
-                            byte[] ar = new byte[Convert.ToInt32(headers["Content-Length"])];
-                            stream.ReadExactly(ar);
-                            body = Encoding.UTF8.GetString(ar);
+                            int len = Convert.ToInt32(headers["Content-Length"]);
+                            char[] ar = new char[len];
+                             reader.Read(ar);
+                            body = new string(ar);
                         }
 
 
@@ -221,7 +222,8 @@ namespace LibraServer
             while (true)
             {
                 TcpClient tcpClient = tcpListener.AcceptTcpClient();
-                ThreadPool.QueueUserWorkItem(state => HandleClient(tcpClient));
+                HandleClient(tcpClient);
+               // ThreadPool.QueueUserWorkItem(state => HandleClient(tcpClient));
             }
         }
     }
