@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
 using ComponentAce.Compression.Libs.zlib;
+using System.Text.RegularExpressions;
 
 namespace LibraServer
 {
@@ -56,36 +57,40 @@ namespace LibraServer
                     {
                         string request = reader.ReadLine();
                         if (string.IsNullOrEmpty(request)) continue;
-                        Console.WriteLine($"Request: {request}");
-                        Dictionary<string, string> headers = new Dictionary<string, string>();
-                        string line;
+                            #if DEBUG 
+                            Console.WriteLine($"Request: {request}");
+                            #endif
+                        string[] requestParts = request.Split(' ');
+                        string method = requestParts[0];
+                        string url = requestParts[1]; 
                         string body = "";
+                        Dictionary<string, string> headers = new Dictionary<string, string>();
+                        
+                        string line;
                         while (!string.IsNullOrEmpty(line = reader.ReadLine()))
                         {
                             Console.WriteLine(line);
                             string[] split = line.Split(':');
                             if (split.Length > 1)
                                 headers[split[0]] = split[1].TrimStart();
-
                         }
                         if (headers.ContainsKey("Content-Length"))
                         {
-                            int len = Convert.ToInt32(headers["Content-Length"]);
-                            char[] ar = new char[len];
-                             reader.Read(ar);
-                            body = new string(ar);
+                            if(!Regex.IsMatch(headers["Content-Length"], @"^\d+$")) { //ensure that content-length is valid
+                                stream.Write(Encoding.UTF8.GetBytes("HTTP/1.1 400 Bad Request\r\nConnection: keep-alive\r\n\r\n"));
+                                break;
+                            }
+                                int len = Convert.ToInt32(headers["Content-Length"]);
+                                char[] ar = new char[len];
+                                reader.Read(ar);
+                                body = new string(ar);
                         }
 
-
-                        string[] requestParts = request.Split(' ');
                         if (requestParts.Length < 3)
                         {
                             stream.Write(Encoding.UTF8.GetBytes("HTTP/1.1 400 Bad Request\r\nConnection: keep-alive\r\n\r\n"));
                             break;
                         }
-
-                        string method = requestParts[0];
-                        string url = requestParts[1]; 
 
                         if (url == "/WebService/GetBlockStars" && method=="POST")
                         {
@@ -110,7 +115,12 @@ namespace LibraServer
                             {
                                 byte[] bytes = File.ReadAllBytes(filePath);
                                 bool isCompressed = CompressIfNeeded(ref bytes);
-                                stream.Write(Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: {GetMimeType(filePath)}\r\n{(isCompressed ? "Content-Encoding: deflate\r\n" : "")}Content-Length: {bytes.Length}\r\nConnection: keep-alive\r\n\r\n"));
+                                string responsePacket = $"HTTP/1.1 200 OK\r\n"+
+                                             $"Content-Type: {GetMimeType(filePath)}\r\n"+
+                                             $"{(isCompressed ? "Content-Encoding: deflate\r\n" : "")}"+
+                                             $"Content-Length: {bytes.Length}\r\n"+
+                                             $"Connection: keep-alive\r\n\r\n"; // poprostu lepiej sie to czyta i latwiej wprowadza zmiany
+                                stream.Write(Encoding.UTF8.GetBytes(responsePacket));
                                 stream.Write(bytes);
                             }
                             else
